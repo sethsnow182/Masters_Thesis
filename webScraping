@@ -1,0 +1,147 @@
+# --- Part 1: Offer ID Extraction ---
+
+from selenium import webdriver
+from selenium_stealth import stealth
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support.ui import Select
+from selenium.webdriver.support import expected_conditions as EC
+import time
+import re
+
+options = webdriver.ChromeOptions()
+options.add_argument('start-maximized')
+# options.add_argument('--headless')
+options.add_experimental_option('excludeSwitches', ['enable-automation'])
+options.add_experimental_option('useAutomationExtension', False)
+browser = webdriver.Chrome(options=options)
+
+stealth(browser,
+        languages=['en-US', 'en'],
+        vendor='Google Inc.',
+        platform='Win64',
+        webgl_vendor='Intel Inc.',
+        renderer='Intel Iris OpenGL Engine',
+        fix_hairline=True,
+        )
+
+url = 'https://www.motors.co.uk/search/car/'
+browser.get(url)
+print('Setup filters')
+time.sleep(2)
+browser.find_element(By.ID, 'onetrust-accept-btn-handler').click()
+browser.find_element(By.ID, 'searchPostcode').send_keys('E16AN')
+WebDriverWait(browser, 100).until(EC.presence_of_element_located((By.XPATH, '//div[text() = "Fuel Type & Range"]'))).click()
+browser.find_element(By.ID, 'FuelTypes_full electric').click()
+browser.switch_to.default_content()
+time.sleep(2)
+next = browser.find_element(By.CSS_SELECTOR, '.pgn__next.btn.btn--3rd.btn--ghost')
+ids = []
+
+while True:
+    page = browser.find_element(By.CSS_SELECTOR, '.pgn__link.btn.active').text
+    print('Scanning page ' + str(page))
+    offers = browser.find_elements(By.CLASS_NAME, 'result-card__link')
+    for offer in offers:
+        link = offer.get_attribute('href')
+        regex = re.search('\/car-(\d+)\/', link)
+        if regex is not None:
+            id = regex.group(1)
+            if id not in ids:
+                ids.append(id)
+    if next.get_attribute('disabled'):
+        break
+    next.click()
+    browser.execute_script('window.scrollTo(0,document.body.scrollHeight)')
+    WebDriverWait(browser, 100).until(EC.invisibility_of_element_located(offers[0]))
+    time.sleep(2)
+print(ids)
+with open('data/ids.txt', 'w') as filehandle:
+    for id in ids:
+        filehandle.write('%s\n' % id)
+browser.quit()
+
+# --- Part 2: Offer Data Extraction ---
+
+from selenium import webdriver
+from selenium_stealth import stealth
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+import time
+import re
+import json
+
+options = webdriver.ChromeOptions()
+options.add_argument('start-maximized')
+# options.add_argument('--headless')
+options.add_experimental_option('excludeSwitches', ['enable-automation'])
+options.add_experimental_option('useAutomationExtension', False)
+browser = webdriver.Chrome(options=options)
+
+stealth(browser,
+    languages=['en-US', 'en'],
+    vendor='Google Inc.',
+    platform='Win32',
+    webgl_vendor='Intel Inc.',
+    renderer='Intel Iris OpenGL Engine',
+    fix_hairline=True,
+)
+
+ids = open('data/ids.txt').read().splitlines()
+index = 1
+
+for id in ids:
+    print('Scanning offer ' + str(index) + ' of ' + str(len(ids)))
+    browser.get('https://www.motors.co.uk/car-' + id)
+    WebDriverWait(browser, 50).until(EC.presence_of_element_located((By.ID, 'mo')))
+    content = browser.find_element(By.CSS_SELECTOR, 'body').get_attribute('outerHTML')
+    regex = re.search('var m_init_data = JSON\.parse\("(.*?)"\);', content)
+
+    if regex is not None:
+        initData = regex.group(1).replace('\\"', '"').replace('\\\\', '\\')
+        data = json.loads(initData)
+        vehicleDetails = dict(data['vehicle'], **data['vehicleSummary'])
+        attributes = open('data/attributes.txt', 'a')
+        for title, value in vehicleDetails.items():
+            row = str(id) + ";" + title + ";" + str(value) + "\n"
+            attributes.writelines(row)
+        for category in data['vehicleSpecs']['specs']['TechnicalSpecs']:
+            for property in category['CategoryList']:
+                row = str(id) + ";" + property['Title'] + ";" + str(property['Value']) + "\n"
+                attributes.writelines(row)
+        attributes.close()
+    index += 1
+
+# --- Part 3: Data Transformation ---
+
+from csv import reader
+from collections import defaultdict
+
+offers = defaultdict(dict)
+result = {'header': [], 'body': {}}
+
+with open('data/attributes.txt', 'r') as read_obj:
+    rows = reader(read_obj, delimiter=';')
+    for row in rows:
+        if row[1] not in result['header']:
+            result['header'].append(row[1])
+        offers[row[0]][row[1]] = row[2]
+for id, offer in offers.items():
+    for column in result['header']:
+        if column in offer:
+            result['body'][id] = offer[column]
+        else:
+            result['body'][id] = ''
+print(result)
+
+# --- Part 4: Data Pivoting and Storing ---
+
+import pandas as pd
+
+data = pd.read_csv('data/attributes.txt', sep=";", header=0, encoding='latin1')
+data.columns = ["ID", "columns", "rows"]
+pivoted = data.pivot_table(index='ID', columns='columns', values='rows', aggfunc='first').reset_index()
+pivoted.columns.name=None
+print(pivoted)
+pivoted.to_excel("output.xlsx")
