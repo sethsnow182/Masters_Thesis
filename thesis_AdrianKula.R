@@ -57,6 +57,7 @@ dataCars$no_of_seats <- NULL
 dataCars <- as.data.frame(unclass(dataCars), stringsAsFactors = TRUE)
 dataCars$registration_year <- factor(dataCars$registration_year)
 str(dataCars)
+head(dataCars$registration_year)
 
 
 #Subset with missing values "NA"
